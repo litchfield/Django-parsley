@@ -22,10 +22,12 @@ FIELD_ATTRS = [
 
 def update_widget_attrs(field, prefix='data'):
     attrs = field.widget.attrs
+
     if field.required:
-        if isinstance(field, forms.ChoiceField):
+        if getattr(field.widget, 'renderer', False):
             # Use a mixin, to try and support non-standard renderers if possible
-            class ParsleyChoiceFieldRenderer(ParsleyChoiceFieldRendererMixin, field.widget.renderer):
+            renderer = field.widget.renderer
+            class ParsleyChoiceFieldRenderer(ParsleyChoiceFieldRendererMixin, renderer):
                 parsley_namespace = prefix
             field.widget.renderer = ParsleyChoiceFieldRenderer
         else:
@@ -67,27 +69,30 @@ def update_widget_attrs(field, prefix='data'):
                 attrs["{prefix}-type-{0}-message".format(field_type, prefix=prefix)] = error_message
 
 
+def parsleyfy_bind(form):
+    prefix = getattr(getattr(form, 'Meta', None), 'parsley_namespace', 'data-parsley')
+    for _, field in form.fields.items():
+        update_widget_attrs(field, prefix)
+    extras = getattr(getattr(form, 'Meta', None), 'parsley_extras', {})
+    for field_name, data in extras.items():
+        for key, value in data.items():
+            if field_name not in form.fields:
+                continue
+            attrs = form.fields[field_name].widget.attrs
+            if key == 'equalto':
+                # Use HTML id for {prefix}-equalto
+                value = '#' + form[value].id_for_label
+            if isinstance(value, bool):
+                value = "true" if value else "false"
+            attrs["{prefix}-%s".format(prefix=prefix) % key] = value
+
 def parsleyfy(klass):
     "A decorator to add {prefix}-* attributes to your form.fields"
     old_init = klass.__init__
 
     def new_init(self, *args, **kwargs):
         old_init(self, *args, **kwargs)
-        prefix = getattr(getattr(self, 'Meta', None), 'parsley_namespace', 'data-parsley')
-        for _, field in self.fields.items():
-            update_widget_attrs(field, prefix)
-        extras = getattr(getattr(self, 'Meta', None), 'parsley_extras', {})
-        for field_name, data in extras.items():
-            for key, value in data.items():
-                if field_name not in self.fields:
-                    continue
-                attrs = self.fields[field_name].widget.attrs
-                if key == 'equalto':
-                    # Use HTML id for {prefix}-equalto
-                    value = '#' + self[value].id_for_label
-                if isinstance(value, bool):
-                    value = "true" if value else "false"
-                attrs["{prefix}-%s".format(prefix=prefix) % key] = value
+        parsleyfy_bind(self)
     klass.__init__ = new_init
 
     return klass
